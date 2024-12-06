@@ -2,27 +2,17 @@
 #include <string>
 #include <iostream>
 #include <vector>
-#include <memory>
+#include <fstream>
 
 namespace OpenCL {
 
-namespace {
-
-void CheckError(std::string tag, int error_code) {
-  if (error_code != CL_SUCCESS) {
-    std::cerr << tag << " error " << error_code << std::endl;
-    exit(error_code);
-  }
-}
-
-}
 OpenCLHelper::OpenCLHelper(OpenCLDeviceType type) {
     SelectPlatform();
     PlatformInfo(platforms_[0]);
 
     SelectDevice(platforms_[0], type);
     DeviceInfo(device_id_);
-    CreateContext();
+    CreateContextAndCommandQueue();
 }
 
 
@@ -209,11 +199,34 @@ cl_program OpenCLHelper::BuildProgramFromSourceInternal(
   return program;
 }
 
+cl_program OpenCLHelper::BuildProgramFromSourceFile(const std::string& file_path) {
+  std::ifstream ifs(file_path);
+  if (!ifs) {
+    std::cerr << "Source file : " << file_path << " can't open.";
+    exit(1);
+  }
 
-void OpenCLHelper::CreateContext() {
+  ifs.seekg(0, std::ios::end);
+  size_t length = ifs.tellg();
+  ifs.seekg(0, std::ios::beg);
+  char* buf = new char[length];
+  ifs.read(buf, length);
+
+  auto program = BuildProgramFromSource(buf, length);
+
+  delete[] buf;
+  return program;
+}
+
+
+void OpenCLHelper::CreateContextAndCommandQueue() {
   int err;
   ctx_ = clCreateContext(NULL, 1, &device_id_, NULL, NULL, &err);
   CheckError("clCreateContext", err);
+
+  command_queue_ = clCreateCommandQueue(ctx_, device_id_, 0, &err);
+
+  CheckError("clCreateCommandQueue", err);
 }
 
 cl_mem OpenCLHelper::CreateBufferRead(size_t memory_size_bytes) {
@@ -228,8 +241,60 @@ cl_mem OpenCLHelper::CreateBufferReadWrite(size_t memory_size_bytes) {
   cl_int err;
   cl_mem ret_mem =
       clCreateBuffer(ctx_, CL_MEM_READ_WRITE, memory_size_bytes, nullptr, &err);
-  CheckError("CreateMemoryRead", err);
+  CheckError("CreateMemoryREADWRITE", err);
   return ret_mem;
+}
+
+cl_mem OpenCLHelper::CreateOpenCLImage2D(size_t width, size_t height, ImageFormat image_format, void* host_ptr) {
+  cl_int error = CL_SUCCESS;
+
+  cl_image_format opencl_image_format;
+  switch (image_format) {
+  case OpenCL::ImageFormat::GrayUInt8: {
+
+    opencl_image_format.image_channel_order = CL_R;
+    opencl_image_format.image_channel_data_type = CL_UNSIGNED_INT8;
+    break;
+  }
+
+  }
+
+  cl_mem ret_mem = clCreateImage2D(ctx_, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, &opencl_image_format,
+                                   width, height, 0, host_ptr, &error);
+  CheckError("CreateImage2D", error);
+  return ret_mem;
+}
+
+void OpenCLHelper::CopyFromHost(cl_mem device_memory, void *host_ptr,
+                                size_t host_ptr_length) {
+  int error = clEnqueueWriteBuffer(command_queue_, device_memory, CL_TRUE, 0,
+                                   host_ptr_length, host_ptr, 0, NULL, NULL);
+}
+
+void OpenCLHelper::CopyToHost(cl_mem device_memory, void *host_ptr,
+                              size_t host_ptr_length) {
+
+  int error = clEnqueueReadBuffer(command_queue_, device_memory, CL_TRUE, 0,
+                                  host_ptr_length, host_ptr, 0, NULL, NULL);
+}
+
+cl_kernel OpenCLHelper::CreateKernel(cl_program program, const std::string& kernel_function_name) {
+  int error;
+
+  cl_kernel kernel = clCreateKernel(program, kernel_function_name.c_str(), &error);
+  CheckError("CreateKernel", error);
+  return kernel;
+}
+
+
+void OpenCLHelper::KernelRun(cl_kernel kernel, size_t global_group_x, size_t global_group_y, size_t global_group_z) {
+    size_t global_sizes[3] = {global_group_x, global_group_y, global_group_z};
+    //size_t local_size = 8;
+    //cl_event kernel_event;
+    // Enqueue kernel
+    int err = clEnqueueNDRangeKernel(command_queue_, kernel, 3, NULL,
+                                     global_sizes, NULL, 0, NULL, NULL);
+    CheckError("EnqueueNDRangeKernel", err);
 }
 
 }
