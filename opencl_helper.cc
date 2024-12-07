@@ -57,8 +57,10 @@ void OpenCLHelper::PlatformInfo(cl_platform_id platform_id) {
 
 void OpenCLHelper::SelectDevice(cl_platform_id platform_id,
                                 OpenCLDeviceType device_type) {
-
   cl_uint num_devices_available;
+  int err = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_ALL, 0, NULL, &num_devices_available);
+  CheckError("clGetDeviceIDs", err);
+
   if (num_devices_available < 1) {
     std::cerr << "No device";
     exit(1);

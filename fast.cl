@@ -61,3 +61,73 @@ __kernel void ImageCopy(read_only image2d_t image,__global uchar* output_image, 
     }
     output_image[index] = p.x;
 }
+
+__kernel void FASTCorner(read_only image2d_t image, __global uchar* output_image, int threshold) {
+    const sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP_TO_EDGE | CLK_FILTER_NEAREST;
+    
+    int2 pos = (int2)(get_global_id(0), get_global_id(1));
+    int index = pos.y * get_global_size(0) + pos.x;
+    
+    // Skip border pixels
+    if(pos.x < 3 || pos.y < 3 || pos.x >= get_image_width(image)-3 || pos.y >= get_image_height(image)-3) {
+        output_image[index] = 0;
+        return;
+    }
+
+    uint4 center = read_imageui(image, sampler, pos);
+    uchar center_val = center.x;
+    
+    // Circle pixels around center point
+    uchar circle[16];
+    
+    // Offsets for circle pixels
+    int width_offset[16] = {
+        0, 1, 2, 3, 3, 3, 2, 1, 0, -1, -2, -3, -3, -3, -2, -1
+    };
+    
+    int height_offset[16] = {
+        -3, -3, -2, -1, 0, 1, 2, 3, 3, 3, 2, 1, 0, -1, -2, -3
+    };
+
+    // Read circle pixels
+    for(int i = 0; i < 16; i++) {
+        uint4 pixel = read_imageui(image, sampler, (int2)(pos.x + width_offset[i], pos.y + height_offset[i]));
+        circle[i] = pixel.x;
+    }
+
+    // Check for contiguous brighter pixels
+    int bright_count = 0;
+    int max_bright = 0;
+    
+    for(int i = 0; i < 32; i++) {
+        int idx = i % 16;
+        if(circle[idx] >= center_val + threshold) {
+            bright_count++;
+            max_bright = max(max_bright, bright_count);
+        } else {
+            bright_count = 0;
+        }
+    }
+    
+    if(max_bright >= 9) {
+        output_image[index] = 255;
+        return;
+    }
+    
+    // Check for contiguous darker pixels
+    int dark_count = 0;
+    int max_dark = 0;
+    
+    for(int i = 0; i < 32; i++) {
+        int idx = i % 16;
+        if(circle[idx] <= center_val - threshold) {
+            dark_count++;
+            max_dark = max(max_dark, dark_count);
+        } else {
+            dark_count = 0;
+        }
+    }
+    
+    output_image[index] = (max_dark >= 9) ? 255 : 0;
+}
+
