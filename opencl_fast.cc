@@ -49,7 +49,7 @@ DetectFASTCornersWithNMS(image_gray, cpu_output, 10);
 std::vector<cv::KeyPoint> cpu_keypoints;
 for(int row = 0; row < cpu_output.rows; row++) {
     for(int col = 0; col < cpu_output.cols; col++) {
-        if(cpu_output.at<uchar>(row, col) == 255) {
+        if(cpu_output.at<uchar>(row, col) > 0) {
             cpu_keypoints.push_back(cv::KeyPoint(col, row, 3));
         }
     }

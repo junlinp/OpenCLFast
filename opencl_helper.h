@@ -100,30 +100,55 @@ inline void OpenCLFast(cv::Mat img, std::string program_source_file, std::string
   std::memcpy(gray_image_data, img.data, image_width * image_height);
 
   OpenCL::OpenCLHelper opencl_helper;
-  auto image_copy_program = opencl_helper.BuildProgramFromSourceFile(program_source_file);
+  auto program = opencl_helper.BuildProgramFromSourceFile(program_source_file);
 
-  auto start_time = std::chrono::high_resolution_clock::now();
+  auto total_start_time = std::chrono::high_resolution_clock::now();
 
+  // Create input image and output buffers
+  auto mem_h2d_start = std::chrono::high_resolution_clock::now();
+  
   cl_mem image_buffer = opencl_helper.CreateOpenCLImage2D(
       image_width, image_height, OpenCL::ImageFormat::GrayUInt8,
       gray_image_data);
 
-  cl_mem output_buffer = opencl_helper.CreateBufferReadWrite(image_width * image_height);
+  cl_mem corner_buffer = opencl_helper.CreateBufferReadWrite(image_width * image_height);
+  cl_mem nms_buffer = opencl_helper.CreateBufferReadWrite(image_width * image_height);
+  
+  auto mem_h2d_end = std::chrono::high_resolution_clock::now();
+  auto mem_h2d_duration = std::chrono::duration_cast<std::chrono::milliseconds>(mem_h2d_end - mem_h2d_start);
 
-  auto image_copy_kernel =
-      opencl_helper.CreateKernel(image_copy_program, "FASTCorner");
+  // Run FAST corner detection
+  auto fast_start_time = std::chrono::high_resolution_clock::now();
+  
+  auto fast_kernel = opencl_helper.CreateKernel(program, "FASTCorner");
+  opencl_helper.KernelBindArgs(fast_kernel, image_buffer, corner_buffer, 10);
+  opencl_helper.KernelRun(fast_kernel, image_width, image_height, 1);
+  
+  auto fast_end_time = std::chrono::high_resolution_clock::now();
+  auto fast_duration = std::chrono::duration_cast<std::chrono::milliseconds>(fast_end_time - fast_start_time);
 
-  opencl_helper.KernelBindArgs(image_copy_kernel, image_buffer, output_buffer,
-                               10);
+  // Run non-maximum suppression
+  auto nms_start_time = std::chrono::high_resolution_clock::now();
+  
+  auto nms_kernel = opencl_helper.CreateKernel(program, "NonMaximumSuppression");
+  opencl_helper.KernelBindArgs(nms_kernel, corner_buffer, nms_buffer, 3);
+  opencl_helper.KernelRun(nms_kernel, image_width, image_height, 1);
+  
+  auto nms_end_time = std::chrono::high_resolution_clock::now();
+  auto nms_duration = std::chrono::duration_cast<std::chrono::milliseconds>(nms_end_time - nms_start_time);
 
-  opencl_helper.KernelRun(image_copy_kernel, image_width, image_height, 1);
-
+  // Get results
+  auto mem_d2h_start = std::chrono::high_resolution_clock::now();
+  
   char* output_image_buffer = new char[image_width * image_height];
-  opencl_helper.CopyToHost(output_buffer, output_image_buffer,
+  opencl_helper.CopyToHost(nms_buffer, output_image_buffer,
                            image_width * image_height);
+                           
+  auto mem_d2h_end = std::chrono::high_resolution_clock::now();
+  auto mem_d2h_duration = std::chrono::duration_cast<std::chrono::milliseconds>(mem_d2h_end - mem_d2h_start);
 
-  auto end_time = std::chrono::high_resolution_clock::now();
-  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+  auto total_end_time = std::chrono::high_resolution_clock::now();
+  auto total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(total_end_time - total_start_time);
   
   cv::Mat opencl_output(image_height, image_width, CV_8UC1, output_image_buffer);
   cv::imwrite(output_file, opencl_output);
@@ -132,7 +157,7 @@ inline void OpenCLFast(cv::Mat img, std::string program_source_file, std::string
   std::vector<cv::KeyPoint> opencl_keypoints;
   for(int row = 0; row < opencl_output.rows; row++) {
     for(int col = 0; col < opencl_output.cols; col++) {
-      if(opencl_output.at<uchar>(row, col) == 255) {
+      if(opencl_output.at<uchar>(row, col) > 0) {
         opencl_keypoints.push_back(cv::KeyPoint(col, row, 3));
       }
     }
@@ -144,7 +169,11 @@ inline void OpenCLFast(cv::Mat img, std::string program_source_file, std::string
   cv::imwrite("fast_opencl.png", fast_opencl_img);
 
   std::cout << "OpenCL Detect : " << opencl_keypoints.size() << std::endl;
-  std::cout << "OpenCL FAST Runtime: " << duration.count() << " ms" << std::endl;
+  std::cout << "OpenCL Memory H2D Runtime: " << mem_h2d_duration.count() << " ms" << std::endl;
+  std::cout << "OpenCL Memory D2H Runtime: " << mem_d2h_duration.count() << " ms" << std::endl;
+  std::cout << "OpenCL FAST Kernel Runtime: " << fast_duration.count() << " ms" << std::endl;
+  std::cout << "OpenCL NMS Kernel Runtime: " << nms_duration.count() << " ms" << std::endl;
+  std::cout << "OpenCL Total Runtime: " << total_duration.count() << " ms" << std::endl;
 
   delete [] gray_image_data;
   delete [] output_image_buffer;

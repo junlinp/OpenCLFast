@@ -95,39 +95,72 @@ __kernel void FASTCorner(read_only image2d_t image, __global uchar* output_image
         circle[i] = pixel.x;
     }
 
-    // Check for contiguous brighter pixels
-    int bright_count = 0;
-    int max_bright = 0;
+    // Calculate corner score
+    int max_score = 0;
     
-    for(int i = 0; i < 32; i++) {
-        int idx = i % 16;
-        if(circle[idx] >= center_val + threshold) {
-            bright_count++;
-            max_bright = max(max_bright, bright_count);
-        } else {
-            bright_count = 0;
+    // Check each arc of 9 contiguous pixels
+    for(int i = 0; i < 16; i++) {
+        int min_val = 255;
+        int max_val = 0;
+        
+        // Check 9 contiguous pixels
+        for(int j = 0; j < 9; j++) {
+            int idx = (i + j) % 16;
+            min_val = min(min_val, (int)circle[idx]);
+            max_val = max(max_val, (int)circle[idx]);
         }
+        
+        // Update max score
+        max_score = max(max_score, 
+                       max(min_val - (int)center_val, (int)center_val - max_val));
     }
     
-    if(max_bright >= 9) {
-        output_image[index] = 255;
+    // Only mark as corner if score exceeds threshold
+    output_image[index] = (max_score > threshold) ? max_score : 0;
+}
+
+__kernel void NonMaximumSuppression(__global uchar* image, __global uchar* output_image, int radius) {
+    int2 pos = (int2)(get_global_id(0), get_global_id(1));
+    int width = get_global_size(0);
+    int height = get_global_size(1);
+    int index = pos.y * width + pos.x;
+    
+    // Skip border pixels
+    if(pos.x < radius || pos.y < radius || 
+       pos.x >= width-radius || 
+       pos.y >= height-radius) {
+        output_image[index] = 0;
+        image[index] = 0;
         return;
     }
-    
-    // Check for contiguous darker pixels
-    int dark_count = 0;
-    int max_dark = 0;
-    
-    for(int i = 0; i < 32; i++) {
-        int idx = i % 16;
-        if(circle[idx] <= center_val - threshold) {
-            dark_count++;
-            max_dark = max(max_dark, dark_count);
-        } else {
-            dark_count = 0;
+
+    int center_val = image[index];
+
+    // If center pixel is not a corner, skip
+    if(center_val == 0) {
+        output_image[index] = 0;
+        image[index] = 0;
+        return;
+    }
+
+    // Check if center is local maximum in radius neighborhood
+    for(int dy = -radius; dy <= radius; dy++) {
+        for(int dx = -radius; dx <= radius; dx++) {
+            // Skip center pixel
+            if(dx == 0 && dy == 0) continue;
+            
+            int neighbor_idx = (pos.y + dy) * width + (pos.x + dx);
+            int neighbor_val = image[neighbor_idx];
+            
+            if(neighbor_val > center_val) {
+                output_image[index] = 0;
+                image[index] = 0;
+                return;
+            }
         }
     }
-    
-    output_image[index] = (max_dark >= 9) ? 255 : 0;
-}
+
+    // If we get here, center is local maximum
+    output_image[index] = center_val;
+}   
 
