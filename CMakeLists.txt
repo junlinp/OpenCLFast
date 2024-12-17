@@ -51,10 +51,20 @@ link_directories(
 /usr/lib/x86_64-linux-gnu
 ${OpenCV_INCLUDE_DIRS}
 )
+
 target_link_libraries(
     fast
     ${OpenCV_LIBS}
     )
+
+add_executable(video_track video_tracker_main.cc)
+
+target_link_libraries(
+    video_track
+    ${OpenCV_LIBS}
+    ${OpenCL_LIBRARIES}
+)
+
 
 
 
